@@ -25,7 +25,7 @@ interface DemoPhoto extends Omit<Photo, 'uploader' | 'likeCount' | 'likedByMe' |
 }
 
 const ADMIN_CODE = 'admin'
-const TAGS: PhotoTag[] = ['engagement', 'welcome', 'ceremony', 'banquet']
+const TAGS: PhotoTag[] = ['engagement', 'banquet']
 const MINUTE = 60_000
 
 let nextId = 1

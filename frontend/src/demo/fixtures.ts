@@ -18,12 +18,12 @@ export const GUESTS: [string, string | null][] = [
 
 /** (上傳者在 GUESTS 的位置, 寬, 高, 分類)。順序就是上傳的先後 */
 export const PHOTOS: [number, number, number, PhotoTag][] = [
-  [0, 3, 4, 'welcome'],
-  [1, 4, 5, 'welcome'],
-  [2, 1, 1, 'ceremony'],
-  [3, 4, 3, 'ceremony'],
-  [4, 3, 4, 'ceremony'],
-  [2, 3, 4, 'ceremony'],
+  [0, 3, 4, 'engagement'],
+  [1, 4, 5, 'engagement'],
+  [2, 1, 1, 'engagement'],
+  [3, 4, 3, 'engagement'],
+  [4, 3, 4, 'engagement'],
+  [2, 3, 4, 'engagement'],
   [5, 4, 5, 'banquet'],
   [6, 1, 1, 'banquet'],
   [7, 3, 4, 'banquet'],
