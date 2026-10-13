@@ -4,11 +4,19 @@ import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { createBlessing } from '@/api/blessings'
 import { ApiError } from '@/api/client'
 import { fetchConfig } from '@/api/config'
-import { uploadPhoto } from '@/api/upload'
-import { useAlbumConfig } from '@/composables/useAlbumConfig'
+import { uploadWithRetry } from '@/api/upload'
+import MediaPreview from '@/components/MediaPreview.vue'
+import { FALLBACK, useAlbumConfig } from '@/composables/useAlbumConfig'
 import { addBlessing } from '@/stores/blessingLists'
 import { invalidateAll } from '@/stores/photoLists'
-import { resetUploadFlow, session, uploadFlow, type PickedMedia } from '@/stores/session'
+import {
+  describeMedia,
+  resetUploadFlow,
+  sizeProblem,
+  session,
+  uploadFlow,
+  type PickedMedia,
+} from '@/stores/session'
 import type { PhotoTag, UploadStatus } from '@/types/album'
 
 const router = useRouter()
@@ -27,6 +35,8 @@ const selected = computed(() =>
 )
 
 const count = computed(() => selected.value.length)
+const summary = computed(() => describeMedia(selected.value))
+const hasVideo = computed(() => selected.value.some((p) => p.kind === 'video'))
 
 const nickname = computed(() => session.nickname || '賓客')
 const initial = computed(() => nickname.value[0] ?? '賓')
@@ -74,10 +84,13 @@ interface Task {
   errorMessage?: string
   /** 上傳成功後拿到的照片 id，祝福要掛在第一張上 */
   photoId?: string
+  /** 失敗後正在等著自動重試 */
+  retrying?: boolean
 }
 
 /** 每張照片的上傳狀態，key 是 PickedMedia.id */
 const tasks = reactive<Record<string, Task>>({})
+const retrying = computed(() => selected.value.some((p) => tasks[p.id]?.retrying))
 const running = ref(false)
 
 const failedCount = computed(
@@ -92,7 +105,7 @@ const failedMessage = computed(() => {
   if (running.value || failedCount.value === 0) return ''
   const first = selected.value.find((p) => tasks[p.id]?.status === 'failed')
   const reason = first ? tasks[first.id]?.errorMessage : ''
-  return `有 ${failedCount.value} 張沒有傳成功：${reason}`
+  return `有 ${failedCount.value} 個檔案沒有傳成功：${reason}`
 })
 
 /** 照片都傳完了，但祝福沒送出去 */
@@ -101,12 +114,53 @@ const blessingError = ref('')
 const submitLabel = computed(() => {
   if (running.value) return `上 傳 中 ${doneCount.value} / ${count.value}`
   if (blessingError.value) return '重 新 送 出 祝 福'
-  if (failedCount.value > 0) return `重 試 ${failedCount.value} 張`
-  return `上 傳 ${count.value} 張 照 片`
+  if (failedCount.value > 0) return `重 試 ${failedCount.value} 個`
+  return `上 傳 ${summary.value}`
 })
 
-// 後端拿不到設定時的保底值，跟後端預設一致
-const FALLBACK = { uploadConcurrency: 3, maxPhotoBytes: 30 * 1024 * 1024 }
+/**
+ * 在手機上先讀影片長度。超過上限就不必傳了：影片動輒上百 MB，傳完才被後端拒絕太浪費。
+ * 讀不到（例如這支手機解不開這種格式）就回 null，交給後端判斷。
+ */
+function readDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video')
+    const url = URL.createObjectURL(file)
+    const done = (value: number | null) => {
+      URL.revokeObjectURL(url)
+      video.removeAttribute('src')
+      resolve(value)
+    }
+    video.preload = 'metadata'
+    video.muted = true
+    video.onloadedmetadata = () => done(Number.isFinite(video.duration) ? video.duration : null)
+    video.onerror = () => done(null)
+    setTimeout(() => done(null), 5000)
+    video.src = url
+  })
+}
+
+function formatSeconds(seconds: number) {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  if (!m) return `${s} 秒`
+  return s ? `${m} 分 ${s} 秒` : `${m} 分鐘`
+}
+
+/** 傳之前先在手機上擋掉的情況，回傳要顯示的原因；沒問題回傳空字串 */
+async function precheck(item: PickedMedia, config: typeof FALLBACK): Promise<string> {
+  // 選取頁已經擋過一次；這裡再檢查是因為後端設定可能在那之後才載入
+  const tooLarge = sizeProblem(item, config)
+  if (tooLarge) return tooLarge
+  if (item.kind === 'video') {
+    const seconds = await readDuration(item.file)
+    // 跟後端一樣留一秒誤差
+    if (seconds !== null && seconds > config.maxVideoSeconds + 1) {
+      return `影片太長了，請剪到 ${formatSeconds(config.maxVideoSeconds)}以內再上傳`
+    }
+  }
+  return ''
+}
 
 async function upload() {
   if (running.value) return
@@ -115,41 +169,56 @@ async function upload() {
   const config = await fetchConfig().catch(() => FALLBACK)
   const tag = uploadFlow.draft.tag
   // 已經傳成功的不重傳；按「重試」時只會跑失敗的那幾張
-  const queue = selected.value.filter((p) => tasks[p.id]?.status !== 'succeeded')
-  for (const item of queue) tasks[item.id] = { status: 'pending', progress: 0 }
+  const pending = selected.value.filter((p) => tasks[p.id]?.status !== 'succeeded')
+  for (const item of pending) tasks[item.id] = { status: 'pending', progress: 0 }
+  // 照片、影片各排各的隊：影片一次只傳一支，不會卡住後面的照片
+  const photoQueue = pending.filter((p) => p.kind !== 'video')
+  const videoQueue = pending.filter((p) => p.kind === 'video')
 
   // 碰到「截止上傳」「傳太多」這種後面每張都會失敗的錯誤，就不再送了
   let stopReason = ''
 
-  async function worker() {
+  async function worker(queue: PickedMedia[]) {
     for (let item = queue.shift(); item; item = queue.shift()) {
       const task = tasks[item.id]!
       if (stopReason) {
         Object.assign(task, { status: 'failed', errorMessage: stopReason })
         continue
       }
-      // 先在手機上擋掉太大的檔案，不必浪費流量傳到一半才被拒絕
-      if (item.file.size > config.maxPhotoBytes) {
-        const mb = Math.floor(config.maxPhotoBytes / 1024 / 1024)
-        Object.assign(task, { status: 'failed', errorMessage: `照片太大了，單張上限 ${mb} MB` })
+      // 先在手機上擋掉太大、太長的檔案，不必浪費流量傳到一半才被拒絕
+      const problem = await precheck(item, config)
+      if (problem) {
+        Object.assign(task, { status: 'failed', errorMessage: problem })
         continue
       }
 
       task.status = 'uploading'
       try {
-        const photo = await uploadPhoto(item.file, tag, (percent) => (task.progress = percent))
-        Object.assign(task, { status: 'succeeded', progress: 100, photoId: photo.id })
+        const photo = await uploadWithRetry(
+          item.file,
+          tag,
+          (percent) => {
+            task.progress = percent
+            if (percent > 0) task.retrying = false
+          },
+          () => (task.retrying = true),
+        )
+        Object.assign(task, { status: 'succeeded', progress: 100, photoId: photo.id, retrying: false })
       } catch (e) {
         const message = e instanceof ApiError ? e.message : '上傳失敗，請稍後再試'
-        Object.assign(task, { status: 'failed', errorMessage: message })
+        Object.assign(task, { status: 'failed', errorMessage: message, retrying: false })
         if (e instanceof ApiError && [401, 403, 429].includes(e.status)) stopReason = message
       }
     }
   }
 
-  // 同時傳幾張由後端設定決定，不要一次全送：會互搶網路，每張都變慢
-  const workers = Array.from({ length: Math.max(1, config.uploadConcurrency) }, worker)
-  await Promise.all(workers)
+  // 同時傳幾個由後端設定決定，不要一次全送：會互搶網路，每個都變慢
+  const pool = (queue: PickedMedia[], size: number) =>
+    Array.from({ length: Math.max(1, size) }, () => worker(queue))
+  await Promise.all([
+    ...pool(photoQueue, config.uploadConcurrency),
+    ...pool(videoQueue, config.videoUploadConcurrency),
+  ])
   running.value = false
 
   if (doneCount.value > 0) invalidateAll()
@@ -171,7 +240,7 @@ async function finish() {
       invalidateAll() // 照片上多了祝福
     } catch (e) {
       blessingError.value =
-        '照片都上傳好了，但祝福沒有送出：' +
+        '檔案都上傳好了，但祝福沒有送出：' +
         (e instanceof ApiError ? e.message : '請稍後再試')
       return
     } finally {
@@ -190,7 +259,7 @@ function skip() {
 // 傳到一半離開會中斷上傳，先確認
 onBeforeRouteLeave(() => {
   if (!running.value) return true
-  return window.confirm('照片還在上傳中，離開會中斷上傳。確定要離開嗎？')
+  return window.confirm('還在上傳中，離開會中斷上傳。確定要離開嗎？')
 })
 </script>
 
@@ -214,10 +283,10 @@ onBeforeRouteLeave(() => {
     </header>
 
     <section class="preview">
-      <p class="preview-label">{{ count }} 張照片 · 將公開分享</p>
+      <p class="preview-label">{{ summary }} · 將公開分享</p>
       <div class="preview-row">
         <div v-for="item in selected" :key="item.id" class="thumb">
-          <img :src="item.previewUrl" alt="" />
+          <MediaPreview :item="item" />
           <template v-if="tasks[item.id]">
             <span
               v-if="tasks[item.id]!.status === 'uploading' || tasks[item.id]!.status === 'pending'"
@@ -232,12 +301,14 @@ onBeforeRouteLeave(() => {
           v-if="!running"
           class="thumb add"
           type="button"
-          aria-label="再選照片"
+          aria-label="再選照片或影片"
           @click="addMore"
         >
           ＋
         </button>
       </div>
+      <p v-if="hasVideo" class="video-hint">影片比較大，上傳時請停留在這一頁，也不要關掉螢幕。</p>
+      <p v-if="retrying" class="video-hint">現在上傳的人比較多，稍等一下會自動重新上傳…</p>
       <p v-if="blessingError" class="upload-error" role="alert">{{ blessingError }}</p>
       <p v-if="failedMessage" class="upload-error" role="alert">
         {{ failedMessage }}
@@ -297,7 +368,7 @@ onBeforeRouteLeave(() => {
       </div>
 
       <fieldset class="settings">
-        <legend class="settings-label">這些照片是在哪個環節拍的？</legend>
+        <legend class="settings-label">這些是在哪個環節拍的？</legend>
         <div class="tags">
           <label
             v-for="t in tagOptions"
@@ -398,11 +469,6 @@ onBeforeRouteLeave(() => {
   overflow: hidden;
 }
 
-.thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
 
 /* 上傳進度：沿著縮圖底部長出來的一條線 */
 .thumb-progress {
@@ -434,6 +500,12 @@ onBeforeRouteLeave(() => {
 
 .thumb-badge.fail {
   background: var(--c-ink);
+}
+
+.video-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--c-ink-mute);
 }
 
 .upload-error {

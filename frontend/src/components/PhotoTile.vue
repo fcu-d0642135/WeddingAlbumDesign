@@ -41,6 +41,13 @@ const gradient = computed(() => {
 })
 
 const aspectRatio = computed(() => (props.ratio === 'auto' ? undefined : props.ratio))
+
+/** 列表上的影片標一個播放角標與長度（1:05）；放大檢視時不標 */
+const videoBadge = computed(() => {
+  if (props.full || props.photo?.kind !== 'video') return null
+  const total = Math.round(props.photo.durationSeconds ?? 0)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+})
 </script>
 
 <template>
@@ -48,6 +55,10 @@ const aspectRatio = computed(() => (props.ratio === 'auto' ? undefined : props.r
     <img v-if="src" :src="src" :alt="photo?.blessing ?? ''" loading="lazy" decoding="async" />
     <div v-else class="texture" />
     <span v-if="label" class="label">{{ label }}</span>
+    <span v-if="videoBadge !== null" class="video-badge">
+      <svg viewBox="0 0 12 12" fill="#fff" aria-hidden="true"><path d="M3 2v8l7-4z" /></svg>
+      {{ videoBadge }}
+    </span>
     <slot />
   </div>
 </template>
@@ -75,6 +86,25 @@ const aspectRatio = computed(() => (props.ratio === 'auto' ? undefined : props.r
     transparent 0 14px,
     rgba(255, 255, 255, 0.08) 14px 15px
   );
+}
+
+.video-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.5);
+  font-size: 9px;
+  color: #fff;
+}
+
+.video-badge svg {
+  width: 9px;
+  height: 9px;
 }
 
 .label {

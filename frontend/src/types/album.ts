@@ -23,15 +23,18 @@ export type PhotoTag = 'engagement' | 'banquet'
 export interface Photo {
   id: PhotoId
   kind: MediaKind
-  /** 原檔網址，可能是 HEIC。只用在下載與匯出，不要拿來顯示 */
+  /**
+   * 原檔網址。照片可能是 HEIC，只用在下載與匯出，不要拿來顯示；
+   * 影片則是拿來播放的檔案（MP4 或 MOV，不轉檔）
+   */
   url: string
-  /** 長邊 1600px 的 JPEG。照片詳情等放大檢視用這個 */
+  /** 長邊 1600px 的 JPEG（影片是封面）。照片詳情等放大檢視用這個 */
   displayUrl: string
-  /** 長邊 480px 的 JPEG。列表一律用這個 */
+  /** 長邊 480px 的 JPEG（影片是封面）。列表一律用這個 */
   thumbnailUrl: string
   width: number
   height: number
-  /** 影片長度（秒），kind 為 'video' 時才有。目前不開放影片 */
+  /** 影片長度（秒，到小數一位），kind 為 'video' 時才有 */
   durationSeconds?: number | null
   uploader: Guest
   /** ISO 8601 */
@@ -77,8 +80,9 @@ export interface WeddingPhoto {
   height: number
 }
 
-/** PhotoTile 顯示一張圖需要的欄位，賓客照片與婚紗照都符合 */
-export type TileImage = Pick<Photo, 'displayUrl' | 'thumbnailUrl'> & { blessing?: string | null }
+/** PhotoTile 顯示一張圖需要的欄位，賓客照片與婚紗照都符合。影片會多一個角標 */
+export type TileImage = Pick<Photo, 'displayUrl' | 'thumbnailUrl'> &
+  Partial<Pick<Photo, 'kind' | 'durationSeconds'>> & { blessing?: string | null }
 
 /** 首頁頂部的統計數字 */
 export interface AlbumStats {

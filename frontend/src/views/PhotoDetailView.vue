@@ -69,7 +69,12 @@ const counter = computed(() => {
 })
 
 const slides = computed(() =>
-  photos.value.map((p) => ({ key: p.id, photo: p, ratio: p.width / p.height })),
+  photos.value.map((p) => ({
+    key: p.id,
+    photo: p,
+    ratio: p.width / p.height,
+    video: p.kind === 'video' ? p.url : undefined,
+  })),
 )
 
 /** 滑到別張時換掉網址，返回鍵才會直接回相簿，而不是一張張倒退 */
@@ -148,6 +153,10 @@ function toggleLike() {
 const isMine = computed(() => !!photo.value && photo.value.uploader.id === session.guestId)
 /** 上傳者刪自己的；管理員可刪任何一張。真正的權限由後端把關，這裡只決定要不要顯示選單 */
 const canDelete = computed(() => isMine.value || session.isAdmin)
+const deleteLabel = computed(() => {
+  const label = photo.value?.kind === 'video' ? '刪除影片' : '刪除照片'
+  return isMine.value ? label : label + '（管理員）'
+})
 const moreOpen = ref(false)
 const deleting = ref(false)
 
@@ -157,9 +166,10 @@ watch(() => props.photoId, () => (moreOpen.value = false))
 async function removeCurrent() {
   const target = photo.value
   if (!target || deleting.value) return
+  const what = target.kind === 'video' ? '這支影片' : '這張照片'
   const question = isMine.value
-    ? '確定要刪除這張照片嗎？刪除後無法復原。'
-    : `以管理員身分刪除「${target.uploader.nickname}」上傳的這張照片？刪除後無法復原。`
+    ? `確定要刪除${what}嗎？刪除後無法復原。`
+    : `以管理員身分刪除「${target.uploader.nickname}」上傳的${what}？刪除後無法復原。`
   if (!window.confirm(question)) return
 
   deleting.value = true
@@ -225,7 +235,7 @@ function toggleFavorite() {
         </button>
         <div v-if="moreOpen" class="more-pop" role="menu">
           <button type="button" role="menuitem" :disabled="deleting" @click="removeCurrent">
-            {{ deleting ? '刪除中…' : isMine ? '刪除照片' : '刪除照片（管理員）' }}
+            {{ deleting ? '刪除中…' : deleteLabel }}
           </button>
         </div>
       </div>

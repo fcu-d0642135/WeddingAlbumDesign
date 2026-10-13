@@ -3,7 +3,7 @@
 import sqlite3
 
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -28,3 +28,25 @@ def _sqlite_pragmas(dbapi_conn, _record) -> None:
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
     cursor.close()
+
+
+def upgrade_existing_tables() -> None:
+    """既有的資料表少了「可以是空值」的新欄位或新索引時，自動補上（例如影片長度、檔案雜湊）。
+
+    create_all() 只建新資料表、不改舊的；新增可空欄位與索引很安全，不必為此刪資料庫。
+    改欄位型別、刪欄位、新增必填欄位仍然不會自動處理，見 README 的「資料庫」。
+    """
+    inspector = inspect(db.engine)
+    with db.engine.begin() as conn:
+        for table in db.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing or not column.nullable:
+                    continue
+                type_sql = column.type.compile(dialect=db.engine.dialect)
+                conn.exec_driver_sql(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {type_sql}')
+            # 索引要在欄位補上之後才建得起來
+            for index in table.indexes:
+                index.create(conn, checkfirst=True)

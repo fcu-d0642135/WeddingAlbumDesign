@@ -22,7 +22,7 @@ const chips: Chip[] = [
   { id: 'all', label: '全部', filter: {} },
   { id: 'engagement', label: '訂婚・迎娶', filter: { tag: 'engagement' } },
   { id: 'banquet', label: '宴客', filter: { tag: 'banquet' } },
-  // 目前不開放影片，「影片」chip 先拿掉；開放時加回 { kind: 'video' }
+  { id: 'video', label: '影片', filter: { kind: 'video' } },
 ]
 
 const filter = computed(() => chips.find((c) => c.id === activeChip.value)!.filter)
@@ -65,11 +65,6 @@ onMounted(() => {
 function ratioOf(p: { width: number; height: number }) {
   return `${p.width}/${p.height}`
 }
-
-function duration(seconds?: number | null) {
-  if (!seconds) return ''
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
-}
 </script>
 
 <template>
@@ -109,12 +104,7 @@ function duration(seconds?: number | null) {
           class="card"
           :to="{ name: 'photo-detail', params: { photoId: p.id }, query: filterToQuery(filter) }"
         >
-          <PhotoTile :photo="p" :index="list.items.indexOf(p)" :ratio="ratioOf(p)">
-            <span v-if="p.kind === 'video'" class="video-badge">
-              <svg viewBox="0 0 12 12" fill="#fff"><path d="M3 2v8l7-4z" /></svg>
-              {{ duration(p.durationSeconds) }}
-            </span>
-          </PhotoTile>
+          <PhotoTile :photo="p" :index="list.items.indexOf(p)" :ratio="ratioOf(p)" />
           <div class="card-foot">
             <span class="avatar">{{ p.uploader.nickname[0] }}</span>
             {{ p.uploader.nickname }}
@@ -128,12 +118,7 @@ function duration(seconds?: number | null) {
           class="card"
           :to="{ name: 'photo-detail', params: { photoId: p.id }, query: filterToQuery(filter) }"
         >
-          <PhotoTile :photo="p" :index="list.items.indexOf(p)" :ratio="ratioOf(p)">
-            <span v-if="p.kind === 'video'" class="video-badge">
-              <svg viewBox="0 0 12 12" fill="#fff"><path d="M3 2v8l7-4z" /></svg>
-              {{ duration(p.durationSeconds) }}
-            </span>
-          </PhotoTile>
+          <PhotoTile :photo="p" :index="list.items.indexOf(p)" :ratio="ratioOf(p)" />
           <div class="card-foot">
             <span class="avatar">{{ p.uploader.nickname[0] }}</span>
             {{ p.uploader.nickname }}
@@ -276,25 +261,6 @@ function duration(seconds?: number | null) {
   overflow: hidden;
   background: var(--c-card);
   box-shadow: var(--shadow-card);
-}
-
-.video-badge {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border-radius: 12px;
-  background: rgba(0, 0, 0, 0.5);
-  font-size: 9px;
-  color: #fff;
-}
-
-.video-badge svg {
-  width: 9px;
-  height: 9px;
 }
 
 .card-foot {

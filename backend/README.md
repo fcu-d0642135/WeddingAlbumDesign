@@ -43,6 +43,7 @@ backend/
 │   ├── auth.py        # 發 token、驗 token（@require_guest）
 │   ├── storage.py     # 照片檔的存放與網址，換雲端儲存只改這裡
 │   ├── images.py      # 照片轉檔：轉正方向、讀拍攝時間、產生顯示用與縮圖
+│   ├── videos.py      # 影片：讀長度與拍攝時間、抓封面（不轉檔）
 │   ├── pagination.py  # 列表 API 共用的 cursor 分頁
 │   ├── seed.py        # flask seed 的測試資料
 │   ├── import_blessings.py  # flask import-blessings
@@ -74,8 +75,8 @@ backend/
   或在執行中用 `sqlite3 wedding.db ".backup 備份檔.db"`。
 - 時間一律以**不帶時區的 UTC** 存進資料庫，回給前端時才轉成台灣時間（`+08:00`）。
 - 開發時照片檔由 Flask 的 `/media/...` 送出；正式環境改由網頁伺服器或雲端儲存直接提供。
-- 啟動時會自動建立還不存在的資料表，但**不會修改已存在的資料表**。
-  改了 `app/models.py` 既有的欄位後，刪掉 `instance/wedding.db` 再啟動即可（開發資料會一起清掉）。
+- 啟動時會自動建立還不存在的資料表，並替既有的資料表補上**可以是空值的新欄位**（例如影片長度）。
+  其他改動（改型別、刪欄位、新增必填欄位）不會自動套用，刪掉 `instance/wedding.db` 再啟動即可（開發資料會一起清掉）。
 - 正式上線前會加上 migration 工具，屆時改欄位就不必刪資料庫。
 
 ## 匯入婚紗照
@@ -105,6 +106,16 @@ backend/
 - 任何一列有問題，整批都不匯入，並列出是哪幾列。
 - 重複匯入同一個檔案不會重複新增。
 - 匯入的作者不能登入；之後同名的人用手機加入，會是另一位賓客。
+
+## 影片
+
+- 影片**不轉檔**，原檔直接拿來播；後端只用 PyAV 讀長度、尺寸、拍攝時間，抓第一格當封面。
+- 上限：`MAX_VIDEO_BYTES`（預設 95 MB，因為 Cloudflare 免費方案單一請求最多 100 MB）、`MAX_VIDEO_SECONDS`（預設 180 秒）。前端一次只傳一支（`VIDEO_UPLOAD_CONCURRENCY`）。
+- 收到的檔案超過 500 KB 時，Werkzeug 會先寫進暫存檔，不會整支放在記憶體裡。
+- **正式環境的網頁伺服器要放寬請求大小與逾時**（例如 nginx 的 `client_max_body_size 100m`），
+  否則影片會在到達 Flask 之前就被擋下。會場網路慢時，一支 95 MB 的影片可能要傳好幾分鐘。
+- 同一位賓客傳了一模一樣的檔案（看 SHA-256），回傳已經有的那張，不會新增：前端逾時自動重送時才不會重複。
+  `photos` 表有 `(uploader_id, content_hash)` 的唯一索引，兩個請求同時寫入也只會留下一筆。
 
 ## 慣例
 

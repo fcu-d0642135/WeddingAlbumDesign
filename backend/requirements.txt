@@ -17,3 +17,6 @@ Pillow==12.3.0
 
 # 讓 Pillow 讀得懂 iPhone 的 HEIC 照片
 pillow-heif==1.8.1
+
+# 影片：讀長度、尺寸、拍攝時間，抓一格當封面。內含 ffmpeg，主機不必另外安裝
+av==19.0.1

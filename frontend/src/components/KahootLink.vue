@@ -2,7 +2,7 @@
 import { useAlbumConfig } from '@/composables/useAlbumConfig'
 
 /**
- * 「一起玩 Kahoot!」按鈕。連結由管理員在「我的」頁設定，沒設定就不顯示。
+ * 「一起玩 Kahoot!」按鈕。連結由管理員在「我的」頁設定，沒設定或開關沒打開就不顯示。
  * 歡迎頁與「我的」頁共用。
  */
 const config = useAlbumConfig()

@@ -1,11 +1,21 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import MediaPreview from '@/components/MediaPreview.vue'
+import { useAlbumConfig } from '@/composables/useAlbumConfig'
 import { wedding } from '@/config/wedding'
-import { setPicked, uploadFlow, type PickedMedia } from '@/stores/session'
+import {
+  TOO_LARGE_HINT,
+  describeMedia,
+  kindOf,
+  setPicked,
+  sizeProblem,
+  uploadFlow,
+  type PickedMedia,
+} from '@/stores/session'
 
 /**
- * 選擇要上傳的照片。
+ * 選擇要上傳的照片與影片。
  *
  * 設計稿畫的是「app 內直接瀏覽相機膠捲」，但網頁沒有任何 API 能列出使用者的相簿
  * ——瀏覽器只允許透過 <input type="file"> 叫出系統選取器。
@@ -14,6 +24,24 @@ import { setPicked, uploadFlow, type PickedMedia } from '@/stores/session'
 
 const router = useRouter()
 const fileInput = ref<HTMLInputElement | null>(null)
+const albumConfig = useAlbumConfig()
+
+/** 超過單檔上限的檔案：在這裡就標出來、不能勾，不要等到上傳才失敗 */
+function isTooLarge(item: PickedMedia) {
+  return sizeProblem(item, albumConfig) !== ''
+}
+
+const tooLargeNotice = computed(() => {
+  const items = picked.value.filter(isTooLarge)
+  if (items.length === 0) return ''
+  const videos = items.some((p) => p.kind === 'video')
+  const photos = items.some((p) => p.kind !== 'video')
+  const limits = [
+    photos && `照片 ${Math.floor(albumConfig.maxPhotoBytes / 1024 / 1024)} MB`,
+    videos && `影片 ${Math.floor(albumConfig.maxVideoBytes / 1024 / 1024)} MB`,
+  ].filter(Boolean)
+  return `有 ${describeMedia(items)}超過上限（${limits.join('、')}），沒辦法上傳。${TOO_LARGE_HINT}`
+})
 
 const picked = computed(() => uploadFlow.picked)
 const selectedIds = computed({
@@ -35,17 +63,20 @@ function openPicker() {
 
 function onFilesChosen(event: Event) {
   const input = event.target as HTMLInputElement
-  // 目前只收照片。有些系統選取器不理會 accept，選到影片也要濾掉
-  const files = Array.from(input.files ?? []).filter((f) => !f.type.startsWith('video/'))
+  const files = Array.from(input.files ?? [])
   setPicked(
     files.map((file, i) => ({
       id: i + '-' + file.name + '-' + file.lastModified,
       file,
+      kind: kindOf(file),
       previewUrl: URL.createObjectURL(file),
     })),
   )
-  // 預設全選，超過上限的部分不選
-  selectedIds.value = picked.value.slice(0, wedding.maxUploadCount).map((p) => p.id)
+  // 預設全選太大的以外的，超過張數上限的部分不選
+  selectedIds.value = picked.value
+    .filter((p) => !isTooLarge(p))
+    .slice(0, wedding.maxUploadCount)
+    .map((p) => p.id)
   input.value = ''
 }
 
@@ -54,6 +85,8 @@ function toggle(id: string) {
   if (i >= 0) {
     selectedIds.value.splice(i, 1)
   } else if (selectedCount.value < wedding.maxUploadCount) {
+    const item = picked.value.find((p) => p.id === id)
+    if (item && isTooLarge(item)) return
     selectedIds.value.push(id)
   }
 }
@@ -75,7 +108,7 @@ function next() {
     <header class="head">
       <button class="head-side" type="button" @click="router.back()">取消</button>
       <div class="head-center">
-        <h1>選擇照片</h1>
+        <h1>選擇照片或影片</h1>
         <p>已選 {{ selectedCount }} / {{ wedding.maxUploadCount }}</p>
       </div>
       <button class="head-side next" type="button" :disabled="selectedCount === 0" @click="next">
@@ -86,7 +119,7 @@ function next() {
     <input
       ref="fileInput"
       type="file"
-      accept="image/*,.heic,.heif"
+      accept="image/*,.heic,.heif,video/mp4,video/quicktime,.mov,.mp4"
       multiple
       hidden
       @change="onFilesChosen"
@@ -107,7 +140,7 @@ function next() {
           <path d="M21 16l-5-5L5 21" />
         </svg>
       </div>
-      <p class="empty-text">選一些今天拍的照片<br />一起放進相簿裡</p>
+      <p class="empty-text">選一些今天拍的照片或影片<br />一起放進相簿裡</p>
       <button class="empty-btn" type="button" @click="openPicker">從手機選擇</button>
     </div>
 
@@ -116,32 +149,41 @@ function next() {
         <button class="source add" type="button" @click="openPicker">＋ 再選</button>
       </div>
 
+      <p v-if="tooLargeNotice" class="too-large-notice">{{ tooLargeNotice }}</p>
+
       <div class="grid">
         <button
           v-for="item in picked"
           :key="item.id"
           type="button"
           class="cell"
+          :class="{ blocked: isTooLarge(item) }"
+          :aria-disabled="isTooLarge(item)"
           @click="toggle(item.id)"
         >
-          <img :src="item.previewUrl" alt="" />
-          <span class="mark" :class="{ on: orderOf(item.id) !== '' }">{{ orderOf(item.id) }}</span>
+          <MediaPreview :item="item" />
+          <span v-if="item.kind === 'video'" class="video-mark" aria-label="影片">
+            <svg viewBox="0 0 12 12" fill="#fff"><path d="M3 2v8l7-4z" /></svg>
+          </span>
+          <span v-if="isTooLarge(item)" class="too-large">太大</span>
+          <span v-else class="mark" :class="{ on: orderOf(item.id) !== '' }">{{
+            orderOf(item.id)
+          }}</span>
         </button>
       </div>
 
       <div v-if="selectedCount > 0" class="tray">
         <div class="tray-thumbs">
-          <img
+          <span
             v-for="(p, i) in selectedPreviews.slice(0, 4)"
             :key="p.id"
-            :src="p.previewUrl"
-            alt=""
+            class="tray-thumb"
             :style="{ marginLeft: i === 0 ? '0' : '-8px' }"
-          />
+          >
+            <MediaPreview :item="p" />
+          </span>
         </div>
-        <span class="tray-text"
-          >已選 <b>{{ selectedCount }}</b> 張照片</span
-        >
+        <span class="tray-text">已選 {{ describeMedia(selectedPreviews) }}</span>
         <button class="tray-btn" type="button" @click="next">下一步 →</button>
       </div>
     </template>
@@ -300,10 +342,51 @@ function next() {
   overflow: hidden;
 }
 
-.cell img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.too-large-notice {
+  margin: 0 16px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--c-rose);
+}
+
+/* 太大的檔案：蓋一層白霧，右上角標「太大」取代勾選圈 */
+.cell.blocked::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--c-bg) 55%, transparent);
+}
+
+.too-large {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--c-ink);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #fff;
+}
+
+/* 影片在左下角標一個播放符號，跟右上角的勾選圈分開 */
+.video-mark {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-mark svg {
+  width: 9px;
+  height: 9px;
 }
 
 .mark {
@@ -349,12 +432,12 @@ function next() {
   display: flex;
 }
 
-.tray-thumbs img {
+.tray-thumb {
   width: 28px;
   height: 28px;
   border-radius: 14px;
   border: 1.5px solid var(--c-ink);
-  object-fit: cover;
+  overflow: hidden;
 }
 
 .tray-text {
@@ -362,11 +445,6 @@ function next() {
   font-size: 12px;
   letter-spacing: 1px;
   color: var(--c-bg);
-}
-
-.tray-text b {
-  color: var(--c-rose-soft);
-  margin: 0 2px;
 }
 
 .tray-btn {

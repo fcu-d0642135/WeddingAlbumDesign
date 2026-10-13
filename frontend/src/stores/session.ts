@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
-import type { UploadDraft } from '@/types/album'
+import type { AlbumConfig } from '@/api/config'
+import type { MediaKind, UploadDraft } from '@/types/album'
 
 /**
  * 跨頁共用的一點點狀態。目前只有「賓客資料」與「上傳流程」兩件事，
@@ -96,8 +97,43 @@ export function clearToken() {
 export interface PickedMedia {
   id: string
   file: File
+  kind: MediaKind
   /** createObjectURL 產生的預覽網址，用完要 revoke */
   previewUrl: string
+}
+
+/**
+ * 只用來決定預覽怎麼畫、套哪個上限；真正是照片還是影片由後端看檔案內容判斷。
+ * 有些 Android 的選取器不給 type，再看副檔名。
+ */
+export function kindOf(file: File): MediaKind {
+  if (file.type.startsWith('video/')) return 'video'
+  return /\.(mov|mp4|m4v)$/i.test(file.name) ? 'video' : 'photo'
+}
+
+/** 「3 張照片、1 支影片」。只有一種時只說那一種 */
+export function describeMedia(items: { kind: MediaKind }[]): string {
+  const videos = items.filter((m) => m.kind === 'video').length
+  const photos = items.length - videos
+  return [photos && `${photos} 張照片`, videos && `${videos} 支影片`].filter(Boolean).join('、')
+}
+
+/** 檔案太大傳不了時，給賓客一條出路：之後再私下給新人 */
+export const TOO_LARGE_HINT = '可以等婚禮過後再分享給新人唷 ♥'
+
+/**
+ * 超過單檔上限時要顯示的原因，沒超過回傳空字串。選取頁與上傳頁共用，
+ * 文字跟後端的 file_too_large 一致。
+ */
+export function sizeProblem(
+  item: { kind: MediaKind; file: File },
+  limits: Pick<AlbumConfig, 'maxPhotoBytes' | 'maxVideoBytes'>,
+): string {
+  const isVideo = item.kind === 'video'
+  const limit = isVideo ? limits.maxVideoBytes : limits.maxPhotoBytes
+  if (item.file.size <= limit) return ''
+  const mb = Math.floor(limit / 1024 / 1024)
+  return `${isVideo ? '影片' : '照片'}太大了，單檔上限 ${mb} MB，${TOO_LARGE_HINT}`
 }
 
 /**

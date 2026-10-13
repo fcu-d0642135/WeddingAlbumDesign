@@ -41,8 +41,13 @@ export function toApiError(status: number, data: unknown): ApiError {
   // 只有 token 本身失效（unauthorized）才清掉身分；接續碼、活動碼錯誤也是 401，
   // 但那時手上的 token 還是好的，不能因此把人登出
   if (status === 401 && session.token && error?.code === 'unauthorized') onUnauthorized()
-  // 502/503/504 又沒有後端的錯誤內容：請求根本沒到 Flask（後端沒開、正在重啟、主機掛了）
-  if (!error && status >= 502 && status <= 504) {
+  // 413 又沒有後端的錯誤內容：還沒到 Flask，就被前面的網頁伺服器（例如 nginx）以請求太大擋下
+  if (!error && status === 413) {
+    return new ApiError(status, 'file_too_large', '檔案太大了')
+  }
+  // 502/503/504 又沒有後端的錯誤內容：請求根本沒到 Flask（後端沒開、正在重啟、主機掛了）。
+  // 520～527 是 Cloudflare 自己的錯誤，例如後端太忙、超過 100 秒沒回應時的 524
+  if (!error && ((status >= 502 && status <= 504) || (status >= 520 && status <= 527))) {
     return new ApiError(status, 'server_unavailable', '暫時連不上伺服器，請稍後再試')
   }
   return new ApiError(

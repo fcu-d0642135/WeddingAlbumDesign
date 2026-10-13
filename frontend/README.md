@@ -59,6 +59,8 @@ npm run dev
 
 - `vite-plugin-pwa`，`registerType: 'autoUpdate'`
 - 相片走執行期快取（`CacheFirst`，上限 300 張／30 天），不進 precache
+- 影片原檔不經過 Service Worker：播放時瀏覽器用 Range 一段一段要，被 SW 攔下來 iPhone 會播不了。
+  `runtimeCaching` 只比對 `thumb.jpg`／`display.jpg`，新增規則時不要把 `/media/` 整個包進去
 - `public/` 下的圖示都是從原始設計圖 `docs/design/app-icon.webp` 裁切、縮放出來的，分兩種：
   - `pwa-192x192.png`、`pwa-512x512.png`、`favicon.png`：跟原圖一樣，保留金邊，圓角外面透明。
   - `apple-touch-icon.png`、`pwa-maskable-512x512.png`：去掉金邊、填滿整個正方形。

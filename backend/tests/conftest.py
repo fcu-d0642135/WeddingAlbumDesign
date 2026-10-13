@@ -45,10 +45,11 @@ def add_photo(app):
     from app.db import db
     from app.models import Photo, now
 
-    def _add(guest_id, tag="banquet", uploaded_at=None, width=300, height=400):
+    def _add(guest_id, tag="banquet", uploaded_at=None, width=300, height=400, kind="photo"):
         with app.app_context():
             photo = Photo(
                 uploader_id=guest_id,
+                kind=kind,
                 tag=tag,
                 width=width,
                 height=height,

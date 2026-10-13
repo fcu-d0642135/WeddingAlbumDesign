@@ -9,7 +9,7 @@ import os
 from flask import Flask
 
 from app import config, errors
-from app.db import db
+from app.db import db, upgrade_existing_tables
 
 DEV_EVENT_CODE = "dev"
 DEV_ADMIN_CODE = "admin"
@@ -34,10 +34,12 @@ def create_app(overrides: dict | None = None) -> Flask:
     if not app.config["ADMIN_CODE"] and (app.debug or app.testing):
         app.config["ADMIN_CODE"] = DEV_ADMIN_CODE
 
-    # 整個請求的大小上限 = 單張照片上限（預設 30 MB）+ 1 MB 給表單的其他欄位（例如 tag）。
-    # 超過這個大小的請求，Flask 在讀進記憶體之前就直接回 413，
-    # 所以就算有人故意傳一個超大的檔案，也不會先被整個收進伺服器的記憶體
-    app.config["MAX_CONTENT_LENGTH"] = app.config["MAX_PHOTO_BYTES"] + 1024 * 1024
+    # 整個請求的大小上限 = 照片與影片上限中較大的（預設影片 200 MB）+ 1 MB 給表單的其他欄位（例如 tag）。
+    # 超過這個大小的請求，Flask 在收下之前就直接回 413。
+    # 收下的檔案超過 500 KB 時，Werkzeug 會寫到暫存檔而不是放在記憶體，同時有很多人傳影片也不會吃光記憶體
+    app.config["MAX_CONTENT_LENGTH"] = (
+        max(app.config["MAX_PHOTO_BYTES"], app.config["MAX_VIDEO_BYTES"]) + 1024 * 1024
+    )
 
     # 中文直接輸出，不要轉成 \u 開頭的跳脫字元
     app.json.ensure_ascii = False
@@ -60,5 +62,6 @@ def create_app(overrides: dict | None = None) -> Flask:
         # 只會建立還不存在的資料表，不會動到已有的資料。
         # 改了既有欄位不會自動套用，見 README 的「資料庫」
         db.create_all()
+        upgrade_existing_tables()
 
     return app

@@ -10,6 +10,8 @@ export interface SwiperSlide {
   photo?: TileImage
   /** 沒有 photo 時給 PhotoTile 挑漸層色 */
   index?: number
+  /** 影片的播放網址。有的話，目前這張改放播放器，封面用 photo 的顯示圖 */
+  video?: string
 }
 
 /**
@@ -20,6 +22,12 @@ const props = defineProps<{ slides: SwiperSlide[] }>()
 const current = defineModel<number>({ required: true })
 
 const track = ref<HTMLElement>()
+
+/**
+ * 播不了的影片（例如舊 Android 解不開 iPhone 的 HEVC）。不提供下載，只說明一下。
+ * 換張時播放器會被拿掉，影片也就跟著停了。
+ */
+const unplayable = ref(new Set<string>())
 
 function indexFromScroll() {
   const el = track.value
@@ -85,9 +93,25 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
     @wheel.passive="release"
   >
     <div v-for="(s, i) in slides" :key="s.key" class="slide">
+      <!-- 影片：只有目前這張放播放器，按下播放才開始下載（preload="none"），左右兩張先顯示封面 -->
+      <div
+        v-if="s.video && i === current"
+        class="photo player"
+        :style="{ '--ratio': s.ratio, aspectRatio: String(s.ratio) }"
+      >
+        <video
+          :src="s.video"
+          :poster="s.photo?.displayUrl"
+          controls
+          playsinline
+          preload="none"
+          @error="unplayable.add(s.key)"
+        />
+        <p v-if="unplayable.has(s.key)" class="unplayable">這支影片在你的裝置上無法播放</p>
+      </div>
       <!-- 只畫目前這張和左右各一張，相片多的時候才不會一次全部載入 -->
       <PhotoTile
-        v-if="Math.abs(i - current) <= 1"
+        v-else-if="Math.abs(i - current) <= 1"
         class="photo"
         :photo="s.photo"
         full
@@ -127,5 +151,31 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 /* 等比縮放到剛好塞進這一格：寬度取「格寬」與「格高 × 寬高比」的較小值 */
 .photo {
   width: min(100cqw, 100cqh * var(--ratio));
+}
+
+.player {
+  position: relative;
+  background: #000;
+}
+
+.player video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.unplayable {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 14px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+  font-size: 12px;
+  color: #fff;
 }
 </style>

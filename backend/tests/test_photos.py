@@ -169,12 +169,13 @@ def test_today_means_taiwan_date(client, me, add_photo):
     assert _ids(_list(client, token, date="today")) == [just_after]
 
 
-def test_filter_video_returns_nothing_for_now(client, me, add_photo):
-    # 目前不開放影片上傳
+def test_filter_by_kind(client, me, add_photo):
     token, guest = me
-    add_photo(guest["id"])
+    photo = add_photo(guest["id"])
+    video = add_photo(guest["id"], kind="video")
 
-    assert _list(client, token, kind="video")["items"] == []
+    assert _ids(_list(client, token, kind="video")) == [video]
+    assert _ids(_list(client, token, kind="photo")) == [photo]
 
 
 # --- 單張 -----------------------------------------------------------------

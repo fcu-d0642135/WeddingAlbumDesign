@@ -2,11 +2,13 @@ import { reactive } from 'vue'
 import { fetchConfig, type AlbumConfig } from '@/api/config'
 
 /** 拿不到後端設定時的保底值，跟後端預設一致 */
-const FALLBACK: AlbumConfig = {
+export const FALLBACK: AlbumConfig = {
   maxPhotoBytes: 30 * 1024 * 1024,
-  maxVideoBytes: 200 * 1024 * 1024,
+  maxVideoBytes: 95 * 1024 * 1024,
+  maxVideoSeconds: 180,
   maxUploadsPerHour: 300,
   uploadConcurrency: 3,
+  videoUploadConcurrency: 1,
   maxBlessingLength: 200,
   uploadsOpen: true,
   kahootUrl: null,
@@ -28,7 +30,7 @@ export function useAlbumConfig(): AlbumConfig {
   return shared
 }
 
-/** 管理員改了 Kahoot! 連結後，直接更新共用的那份 */
+/** 管理員改了 Kahoot! 連結或開關後，直接更新共用的那份（開關關著就傳 null） */
 export function setSharedKahootUrl(url: string | null) {
   shared.kahootUrl = url
 }

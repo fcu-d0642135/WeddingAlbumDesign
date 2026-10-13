@@ -124,12 +124,14 @@ HTTP 狀態碼表示錯誤類別，回應內容固定是這個形狀：
 }
 ```
 
-- `kind`：`photo` 或 `video`。`durationSeconds` 只有影片才有。**目前不開放上傳影片**，所以一律是 `photo`；
-  欄位先保留，之後開放影片時前端不必改。
+- `kind`：`photo` 或 `video`。`durationSeconds`（影片長度，秒，到小數一位）只有影片才有，照片是 `null`。
+- **影片**沿用同一個形狀：`thumbnailUrl`、`displayUrl` 是**封面**（JPEG），`url` 是影片原檔（MP4 或 MOV，不轉檔），
+  **播放用 `url`**。`width` / `height` 是畫面尺寸，已依拍攝方向轉正。
 - 三種網址，**依用途選用**：
   - `thumbnailUrl`：長邊 480px 的 JPEG。**列表一律用這個。**
   - `displayUrl`：長邊 1600px 的 JPEG。**照片詳情等放大檢視用這個。**
-  - `url`：原檔，格式就是賓客上傳的格式（可能是 HEIC，很多瀏覽器打不開）。只用在下載與匯出，**不要拿來顯示**。
+  - `url`：原檔，格式就是賓客上傳的格式（可能是 HEIC，很多瀏覽器打不開）。照片只用在下載與匯出，**不要拿來顯示**；
+    影片則是拿來播放的檔案（見上方）。
 - `width` / `height`：原圖尺寸（已依拍攝方向轉正），前端拿來算比例排版，**一定要有**。
 - `takenAt`：從 EXIF 讀出來的拍攝時間，讀不到就是 `null`。
 - `tag`：`engagement`（訂婚・迎娶）、`banquet`（宴客）其中一個，上傳時由賓客選。
@@ -328,10 +330,13 @@ HTTP 狀態碼表示錯誤類別，回應內容固定是這個形狀：
 
 | 欄位 | 必填 | 說明 |
 | --- | --- | --- |
-| `file` | ✓ | 照片檔 |
+| `file` | ✓ | 照片或影片檔。是哪一種**看檔案內容判斷** |
 | `tag` | | `engagement` / `banquet`，預設 `banquet`（多數賓客只參加宴客） |
 
 回應 `201`，內容是建立好的 Photo。
+
+**同一位賓客傳了一模一樣的檔案**（看檔案內容的 SHA-256，不看檔名），回應 `200` 與**已經有的那張** Photo，不會新增。
+所以前端遇到逾時、斷線可以放心重送：第一次其實已經存好的話，不會變成兩張。不同賓客傳同一個檔案（例如 LINE 轉傳）各算各的。
 
 | 錯誤 `code` | 狀態碼 | 何時 |
 | --- | --- | --- |
@@ -339,8 +344,8 @@ HTTP 狀態碼表示錯誤類別，回應內容固定是這個形狀：
 | `invalid_tag` | `400` | 分類不正確 |
 | `uploads_closed` | `403` | 相簿已截止上傳（`uploadsOpen: false`） |
 | `file_too_large` | `413` | 超過單檔上限 |
-| `unsupported_format` | `415` | 不是支援的照片格式。**看檔案內容判斷**，副檔名、Content-Type 改了也沒用 |
-| `video_not_supported` | `415` | 傳了影片（目前不開放） |
+| `unsupported_format` | `415` | 不是支援的照片或影片格式，或檔案壞掉。**看檔案內容判斷**，副檔名、Content-Type 改了也沒用 |
+| `video_too_long` | `400` | 影片超過長度上限 |
 | `too_many_uploads` | `429` | 一小時內傳太多 |
 
 祝福**不跟著照片一起送**：所有檔案都傳完後，前端再呼叫一次 `POST /api/blessings` 並帶上第一張的 `photoId`。
@@ -351,8 +356,13 @@ HTTP 狀態碼表示錯誤類別，回應內容固定是這個形狀：
 | | 格式 | 單檔上限 |
 | --- | --- | --- |
 | 照片 | JPEG、PNG、HEIC、WebP | 30 MB |
+| 影片 | MP4、MOV | 95 MB、180 秒 |
 
-影片目前不開放，上傳影片檔回 `415`。
+- **影片不轉檔**，原檔直接播。轉檔很吃 CPU，婚宴高峰會塞車；iPhone 拍的 HEVC 在 iPhone 與多數新的 Android 都能播，
+  播不了的瀏覽器顯示封面與說明。後端只讀長度、尺寸、拍攝時間，抓第一格當封面。
+- 參考：手機預設拍 1080p，每分鐘約 60 MB（iPhone HEVC）～130 MB（多數 Android 的 H.264），
+  所以 95 MB 大約是 iPhone 1 分半、Android 45 秒。
+- 影片上限 95 MB 是因為 **Cloudflare 免費方案單一請求最多 100 MB**，超過的在到達後端前就會被擋掉。
 
 - **原檔原封不動保存**，之後要整批匯出給新人時拿到的就是原始畫質。
 - 後端另外產生 JPEG 縮圖給畫面用。iPhone 的 HEIC 很多瀏覽器（例如 Android 的 Chrome）看不懂，
@@ -360,10 +370,13 @@ HTTP 狀態碼表示錯誤類別，回應內容固定是這個形狀：
 
 **同時上傳的人很多時**
 
-以約 200 位賓客估算：
-
-- 前端：每支手機**同時最多傳 3 個檔案**，其餘排隊。不要 10 張同時送，會互搶網路，每張都變慢。
-- 後端：每位賓客每小時上限 300 個檔案（暫定），超過回 `429`。正常賓客碰不到，主要是防活動碼外流後被灌爆。
+- 前端：每支手機**同時最多傳 3 張照片**、**影片一次只傳 1 支**（`uploadConcurrency`、`videoUploadConcurrency`），其餘排隊。
+  不要 10 張同時送，會互搶網路，每張都變慢。
+- 前端：斷線、伺服器忙碌或逾時（`502`～`504`、Cloudflare 的 `520`～`527`）時，等 3、10、30 秒各自動重試一次，
+  靠上面的「重複檔案合併」保證不會重複。
+- 伺服器同時要處理的照片數 ≈ 正在上傳的手機數 × `uploadConcurrency`。處理一張 iPhone HEIC 約 1～2 秒 CPU，
+  排隊太長會超過 Cloudflare 的 100 秒逾時；**塞車時把 `UPLOAD_CONCURRENCY` 調成 1**，每個人慢一點，但不會失敗。
+- 後端：每位賓客每小時上限 300 個檔案（照片影片合計，暫定），超過回 `429`。正常賓客碰不到，主要是防活動碼外流後被灌爆。
 - 真正的瓶頸通常是**會場網路**，不是 API。
 
 ### 設定
@@ -371,14 +384,17 @@ HTTP 狀態碼表示錯誤類別，回應內容固定是這個形狀：
 | 方法 | 路徑 | 需要 token | 用途 |
 | --- | --- | --- | --- |
 | `GET` | `/api/config` | ✗ | 前端要遵守的各種上限，以及管理員設定的 Kahoot! 連結 |
-| `PUT` | `/api/settings/kahoot` | ✓（管理員） | 設定或拿掉 Kahoot! 連結 |
+| `GET` | `/api/settings/kahoot` | ✓（管理員） | 目前存的 Kahoot! 連結與開關 |
+| `PUT` | `/api/settings/kahoot` | ✓（管理員） | 設定 Kahoot! 連結與開關 |
 
 ```json
 {
   "maxPhotoBytes": 31457280,
-  "maxVideoBytes": 209715200,
+  "maxVideoBytes": 99614720,
+  "maxVideoSeconds": 180,
   "maxUploadsPerHour": 300,
   "uploadConcurrency": 3,
+  "videoUploadConcurrency": 1,
   "maxBlessingLength": 200,
   "uploadsOpen": true,
   "kahootUrl": "https://kahoot.it/?pin=1234567"
@@ -391,22 +407,25 @@ HTTP 狀態碼表示錯誤類別，回應內容固定是這個形狀：
 
 `uploadsOpen` 為 `false` 時代表相簿已截止上傳，前端隱藏上傳按鈕，`POST /api/photos` 回 `403`。
 
-**Kahoot! 連結**：遊戲的 PIN 碼要到主持人開始遊戲時才知道，所以不寫在前端、也不放環境變數，
-由**管理員在 app 裡設定**，所有人（包括還沒加入的歡迎頁）透過 `kahootUrl` 拿到。沒設定時是 `null`，前端不顯示按鈕。
+**Kahoot! 連結**：遊戲的 PIN 碼可能提早拿到、也可能到主持人開始遊戲時才知道，所以不寫在前端、也不放環境變數，
+由**管理員在 app 裡設定**。連結和開關分開：連結可以先存好，**開關打開**後所有人（包括還沒加入的歡迎頁）才會透過
+`kahootUrl` 拿到。沒有連結或開關關著時是 `null`，前端不顯示按鈕。
 
-`PUT /api/settings/kahoot`
+`GET /api/settings/kahoot`、`PUT /api/settings/kahoot`
 
 ```json
-// 請求：url 傳空字串或 null 代表拿掉
-{ "url": "https://kahoot.it/?pin=1234567" }
+// PUT 請求：整份覆蓋。url 傳空字串或 null 代表拿掉（開關也會一起關掉）；enabled 沒傳視為 false
+{ "url": "https://kahoot.it/?pin=1234567", "enabled": true }
 
-// 回應 200
-{ "kahootUrl": "https://kahoot.it/?pin=1234567" }
+// 回應 200（GET 也是這個形狀）
+{ "url": "https://kahoot.it/?pin=1234567", "enabled": true }
 ```
 
 | 錯誤 `code` | 狀態碼 | 何時 |
 | --- | --- | --- |
 | `invalid_url` | `400` | 不是 `http://` 或 `https://` 開頭的網址，或超過 500 字 |
+| `url_required` | `400` | 沒有連結卻要打開開關 |
+| `invalid_body` | `400` | `enabled` 不是 `true`／`false` |
 | `not_admin` | `403` | 不是管理員 |
 
 ### 祝福
@@ -471,4 +490,3 @@ HTTP 狀態碼表示錯誤類別，回應內容固定是這個形狀：
 - **附加拍攝地點**：所有環節都在同一個會館，改用照片分類（`tag`）區分環節。
 - **首頁的搜尋**：先拿掉按鈕，之後再決定要不要做。要做的話，打算做成「找賓客」：輸入暱稱，
   列出這個人拍的照片（`uploader=<guestId>` 已經有了，再加一支用暱稱找賓客的 API）。
-- **賓客上傳影片**：這個階段先不開放。資料形狀保留 `kind`、`durationSeconds` 與 `maxVideoBytes`，之後開放時不必改格式。

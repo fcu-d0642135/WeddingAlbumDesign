@@ -1,5 +1,6 @@
 /**
- * 上傳照片：POST /api/photos，一個請求一個檔案。見 docs/api.md 的「上傳」。
+ * 上傳照片或影片：POST /api/photos，一個請求一個檔案。見 docs/api.md 的「上傳」。
+ * 是照片還是影片由後端看檔案內容判斷，這裡不必分。
  *
  * 用 XMLHttpRequest 而不是 fetch：fetch 拿不到上傳進度，每張照片就沒辦法有自己的進度條。
  */
@@ -48,4 +49,37 @@ export function uploadPhoto(
 
     xhr.send(form)
   })
+}
+
+/** 第 1、2、3 次重試前各等多久。婚宴高峰時伺服器塞車，等久一點再試比較容易成功 */
+const RETRY_DELAYS_MS = [3_000, 10_000, 30_000]
+
+/** 網路斷線、伺服器太忙或逾時：等一下再試就可能成功。其他錯誤（格式不對、太大）怎麼試都一樣 */
+function isRetryable(e: unknown) {
+  return e instanceof ApiError && (e.code === 'network_error' || e.code === 'server_unavailable')
+}
+
+/**
+ * 失敗時自動重試幾次，賓客不必自己按「重試」。
+ * 重送是安全的：後端認得出同一個檔案，之前其實已經存好的話，會回傳那一張，不會變成兩張。
+ */
+export async function uploadWithRetry(
+  file: File,
+  tag: PhotoTag,
+  onProgress: (percent: number) => void,
+  /** 要開始第幾次重試時通知，畫面可以顯示「重新上傳中」 */
+  onRetry: (attempt: number) => void,
+): Promise<Photo> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await uploadPhoto(file, tag, onProgress)
+    } catch (e) {
+      const delay = RETRY_DELAYS_MS[attempt]
+      if (delay === undefined || !isRetryable(e)) throw e
+      onRetry(attempt + 1)
+      onProgress(0)
+      // 加一點隨機：大家同時失敗時，不要又同時重送
+      await new Promise((resolve) => setTimeout(resolve, delay * (0.75 + Math.random() * 0.5)))
+    }
+  }
 }

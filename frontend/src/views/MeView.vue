@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { deleteBlessing } from '@/api/blessings'
-import { setKahootUrl } from '@/api/config'
+import { fetchKahootSettings, saveKahootSettings, type KahootSettings } from '@/api/config'
 import { ApiError } from '@/api/client'
 import { fetchMe, type MyStats } from '@/api/guests'
 import type { PhotoFilter } from '@/api/photos'
@@ -14,7 +14,7 @@ import KahootLink from '@/components/KahootLink.vue'
 import PhotoTile from '@/components/PhotoTile.vue'
 import ProfileSheet from '@/components/ProfileSheet.vue'
 import TextSizePicker from '@/components/TextSizePicker.vue'
-import { setSharedKahootUrl, useAlbumConfig } from '@/composables/useAlbumConfig'
+import { setSharedKahootUrl } from '@/composables/useAlbumConfig'
 import { useInfiniteScroll } from '@/composables/useInfiniteScroll'
 import { installGuideKind } from '@/composables/usePlatform'
 import {
@@ -124,27 +124,46 @@ const continueOpen = ref(false)
 const profileOpen = ref(false)
 
 // --- 管理員：設定 Kahoot! 連結 ---------------------------------------------
-// 遊戲的 PIN 碼要到主持人開始遊戲才知道，所以由管理員當場貼上，大家的按鈕就會出現
+// 連結可以提早貼上存好，到時候只要打開開關，大家的按鈕就會出現
 
-const albumConfig = useAlbumConfig()
+const kahoot = ref<KahootSettings>({ url: null, enabled: false })
 const kahootDraft = ref('')
 const kahootSaving = ref(false)
 const kahootMessage = ref('')
 
+function applyKahoot(settings: KahootSettings) {
+  kahoot.value = settings
+  kahootDraft.value = settings.url ?? ''
+  setSharedKahootUrl(settings.enabled ? settings.url : null)
+}
+
+// 是不是管理員要等 refreshMe 問過後端才確定
 watch(
-  () => albumConfig.kahootUrl,
-  (url) => (kahootDraft.value = url ?? ''),
+  () => session.isAdmin,
+  (isAdmin) => {
+    if (!isAdmin) return
+    fetchKahootSettings()
+      .then(applyKahoot)
+      .catch(() => {
+        // 拿不到就先顯示空的，儲存時以後端為準
+      })
+  },
   { immediate: true },
 )
 
-async function saveKahoot(url: string) {
+function kahootDoneMessage({ url, enabled }: KahootSettings) {
+  if (!url) return '已拿掉，按鈕不再顯示'
+  if (!enabled) return '連結已存好，打開開關後大家才會看到按鈕'
+  return '按鈕已顯示。其他人重新整理或切換頁面就會看到'
+}
+
+async function saveKahoot(url: string, enabled: boolean) {
   kahootSaving.value = true
   kahootMessage.value = ''
   try {
-    const { kahootUrl } = await setKahootUrl(url)
-    setSharedKahootUrl(kahootUrl)
-    kahootDraft.value = kahootUrl ?? ''
-    kahootMessage.value = kahootUrl ? '已儲存。其他人重新整理或切換頁面就會看到' : '已拿掉，按鈕不再顯示'
+    const saved = await saveKahootSettings({ url, enabled })
+    applyKahoot(saved)
+    kahootMessage.value = kahootDoneMessage(saved)
   } catch (e) {
     kahootMessage.value = e instanceof ApiError ? e.message : '儲存失敗，請稍後再試'
   } finally {
@@ -217,7 +236,9 @@ const guideOpen = ref(false)
 
     <section v-if="session.isAdmin" class="admin-box" aria-label="管理員設定">
       <h2>Kahoot! 連結（管理員）</h2>
-      <p class="admin-hint">主持人開始遊戲後，把加入連結貼在這裡，所有人的歡迎頁與「我的」頁就會出現按鈕。</p>
+      <p class="admin-hint">
+        連結可以先貼上存好；打開下面的開關，所有人的歡迎頁與「我的」頁才會出現按鈕。
+      </p>
       <input
         v-model="kahootDraft"
         class="admin-input"
@@ -231,20 +252,33 @@ const guideOpen = ref(false)
           class="admin-save"
           type="button"
           :disabled="kahootSaving || !kahootDraft.trim()"
-          @click="saveKahoot(kahootDraft)"
+          @click="saveKahoot(kahootDraft, kahoot.enabled)"
         >
           儲存
         </button>
         <button
-          v-if="albumConfig.kahootUrl"
+          v-if="kahoot.url"
           class="admin-clear"
           type="button"
           :disabled="kahootSaving"
-          @click="saveKahoot('')"
+          @click="saveKahoot('', false)"
         >
           拿掉
         </button>
       </div>
+      <!-- 開關只切換顯示，用的是已經存好的連結，不是輸入框裡還沒儲存的內容。
+           prevent：等後端存好才跟著變，失敗時不會停在錯的狀態 -->
+      <label class="admin-switch" :class="{ off: !kahoot.url }">
+        <input
+          type="checkbox"
+          role="switch"
+          :checked="kahoot.enabled"
+          :disabled="kahootSaving || !kahoot.url"
+          @click.prevent="saveKahoot(kahoot.url ?? '', !kahoot.enabled)"
+        />
+        <span class="switch-track" aria-hidden="true" />
+        <span>{{ kahoot.url ? '顯示按鈕給大家' : '先儲存連結才能打開' }}</span>
+      </label>
       <p v-if="kahootMessage" class="admin-hint">{{ kahootMessage }}</p>
     </section>
 
@@ -520,6 +554,65 @@ const guideOpen = ref(false)
   border: 1px solid var(--c-line-strong);
   background: transparent;
   color: var(--c-ink-soft);
+}
+
+.admin-switch {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--c-ink);
+}
+
+.admin-switch.off {
+  color: var(--c-ink-mute);
+}
+
+.admin-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-track {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--c-line-strong);
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.switch-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: var(--shadow-raised);
+  transition: transform 0.2s;
+}
+
+.admin-switch input:checked + .switch-track {
+  background: var(--c-rose);
+}
+
+.admin-switch input:checked + .switch-track::after {
+  transform: translateX(18px);
+}
+
+.admin-switch input:disabled + .switch-track {
+  opacity: 0.45;
+}
+
+.admin-switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--c-rose);
+  outline-offset: 2px;
 }
 
 .install {

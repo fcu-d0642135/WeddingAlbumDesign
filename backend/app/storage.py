@@ -5,6 +5,8 @@
 """
 
 import os
+import shutil
+from typing import BinaryIO
 
 from flask import Blueprint, current_app, send_from_directory
 
@@ -19,6 +21,15 @@ def save(key: str, data: bytes) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         f.write(data)
+
+
+def save_stream(key: str, stream: BinaryIO) -> None:
+    """跟 save() 一樣，但從檔案串流一段一段複製，影片這種大檔案不必整個讀進記憶體。"""
+    path = os.path.join(media_dir(), *key.split("/"))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    stream.seek(0)
+    with open(path, "wb") as f:
+        shutil.copyfileobj(stream, f)
 
 
 def delete(key: str) -> None:

@@ -175,13 +175,6 @@ def test_image_with_fake_extension_is_checked_by_content(client, token):
     assert res.status_code == 415
 
 
-def test_video_is_not_supported_yet(client, token):
-    res = upload(client, token, b"\x00\x00\x00\x18ftypmp42", filename="v.mp4", mimetype="video/mp4")
-
-    assert res.status_code == 415
-    assert res.get_json()["error"]["code"] == "video_not_supported"
-
-
 def test_invalid_tag_is_400(client, token):
     res = upload(client, token, make_image(), tag="party")
     assert res.get_json()["error"]["code"] == "invalid_tag"
@@ -220,9 +213,10 @@ def test_hourly_upload_limit(app, client, join):
     token, _ = join("小慧")
     other, _ = join("阿凱")
 
-    assert upload(client, token, make_image()).status_code == 201
-    assert upload(client, token, make_image()).status_code == 201
-    res = upload(client, token, make_image())
+    # 尺寸不同才是不同的檔案；一模一樣的檔案會被當成重送，不算次數
+    assert upload(client, token, make_image(size=(400, 300))).status_code == 201
+    assert upload(client, token, make_image(size=(401, 300))).status_code == 201
+    res = upload(client, token, make_image(size=(402, 300)))
     assert res.status_code == 429
     assert res.get_json()["error"]["code"] == "too_many_uploads"
 
@@ -235,3 +229,63 @@ def test_failed_upload_leaves_nothing_behind(app, client, token):
 
     assert client.get("/api/photos", headers=auth(token)).get_json()["items"] == []
 
+
+
+# --- 重送同一個檔案 -------------------------------------------------------
+
+
+def test_same_file_twice_returns_existing_photo(app, client, token):
+    # 逾時後手機自動重送：後端其實已經存好了，不能變成兩張
+    data = make_image()
+    first = upload(client, token, data)
+    again = upload(client, token, data, filename="IMG_0001 (1).jpg")
+
+    assert first.status_code == 201
+    assert again.status_code == 200
+    assert again.get_json()["id"] == first.get_json()["id"]
+    assert len(client.get("/api/photos", headers=auth(token)).get_json()["items"]) == 1
+
+
+def test_resend_does_not_count_toward_hourly_limit(app, client, token):
+    app.config["MAX_UPLOADS_PER_HOUR"] = 1
+    data = make_image()
+
+    assert upload(client, token, data).status_code == 201
+    assert upload(client, token, data).status_code == 200
+
+
+def test_same_file_from_different_guests_is_kept_twice(client, join):
+    # 照片在 LINE 群組轉傳，兩個人都上傳：各算各的
+    data = make_image()
+    a, _ = join("小慧")
+    b, _ = join("阿凱")
+
+    assert upload(client, a, data).status_code == 201
+    assert upload(client, b, data).status_code == 201
+
+
+def test_resend_racing_the_first_request_keeps_one(app, client, token, monkeypatch):
+    # 第一個請求還在處理時重送就到了：兩邊都查不到重複，各自處理，寫入時才撞上。
+    # 模擬法：讓「找重複」第一次查不到，第二個請求寫入時撞到唯一索引
+    from app.api import photos as photos_api
+
+    data = make_image()
+    first = upload(client, token, data).get_json()
+
+    real = photos_api._find_duplicate
+    calls = {"n": 0}
+
+    def miss_once(content_hash):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real(content_hash)
+
+    monkeypatch.setattr(photos_api, "_find_duplicate", miss_once)
+    res = upload(client, token, data)
+
+    assert res.status_code == 200
+    assert res.get_json()["id"] == first["id"]
+    assert len(client.get("/api/photos", headers=auth(token)).get_json()["items"]) == 1
+    # 輸掉的那次存下的檔案要清掉，不留孤兒檔
+    root = os.path.join(app.config["MEDIA_DIR"], "photos")
+    leftovers = [d for d in os.listdir(root) if d != first["id"] and os.listdir(os.path.join(root, d))]
+    assert leftovers == []
