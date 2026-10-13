@@ -5,7 +5,7 @@
  * 資料只存在記憶體，重新整理就回到初始的假資料；身分（token）仍記在手機上，
  * 所以重新整理後還是同一位賓客，只是剛上傳的照片、留言不見了。
  */
-import { session } from '@/stores/session'
+import { kindOf, session, sizeProblem } from '@/stores/session'
 import type { Blessing, Guest, Page, Photo, PhotoTag, WeddingPhoto } from '@/types/album'
 import { BLESSINGS, GUESTS, LIKES, PHOTOS, WEDDING, gradientImage, sizeOf } from './fixtures'
 
@@ -25,6 +25,17 @@ interface DemoPhoto extends Omit<Photo, 'uploader' | 'likeCount' | 'likedByMe' |
 }
 
 const ADMIN_CODE = 'admin'
+const MB = 1024 * 1024
+/** 跟後端的預設值一致（backend/app/config.py） */
+const LIMITS = {
+  maxPhotoBytes: 30 * MB,
+  maxVideoBytes: 95 * MB,
+  maxVideoSeconds: 180,
+  maxUploadsPerHour: 300,
+  uploadConcurrency: 3,
+  videoUploadConcurrency: 1,
+  maxBlessingLength: 200,
+}
 const TAGS: PhotoTag[] = ['engagement', 'banquet']
 const MINUTE = 60_000
 
@@ -37,7 +48,11 @@ const blessings: Blessing[] = []
 const weddingPhotos: WeddingPhoto[] = []
 /** 接續碼 → 賓客 id */
 const transferCodes = new Map<string, string>()
-let kahootUrl: string | null = null
+/**
+ * Kahoot! 連結可以先存好，開關打開才會出現在大家的 kahootUrl。
+ * 展示版一開始就帶範例連結並打開，打開網站就看得到按鈕；用管理員身分可以關掉或換連結
+ */
+let kahoot: { url: string | null; enabled: boolean } = { url: 'https://kahoot.it/', enabled: true }
 
 function seed() {
   const seeded = GUESTS.map(([nickname, relation]) => {
@@ -185,15 +200,7 @@ function claim(body: Record<string, unknown>): MockResponse {
 }
 
 function config(): MockResponse {
-  return ok({
-    maxPhotoBytes: 30 * 1024 * 1024,
-    maxVideoBytes: 200 * 1024 * 1024,
-    maxUploadsPerHour: 300,
-    uploadConcurrency: 3,
-    maxBlessingLength: 200,
-    uploadsOpen: true,
-    kahootUrl,
-  })
+  return ok({ ...LIMITS, uploadsOpen: true, kahootUrl: kahoot.enabled ? kahoot.url : null })
 }
 
 // ── 身分 ──────────────────────────────────────────────
@@ -289,24 +296,37 @@ function photoAction(guest: DemoGuest, method: string, id: string, action?: stri
   return ok(toPhoto(photo, guest.id))
 }
 
-/** 上傳不走 JSON，由 api/upload.ts 直接呼叫。照片用 object URL 顯示，重新整理就消失 */
+/**
+ * 上傳不走 JSON，由 api/upload.ts 直接呼叫。照片、影片都用 object URL 顯示，重新整理就消失。
+ * 影片的封面在瀏覽器裡抓第一格（真正的後端用 PyAV 抓）。
+ */
 export async function mockUpload(file: File, tag: PhotoTag): Promise<MockResponse> {
   const guest = guestFromToken(session.token)
   if (!guest) return fail(401, 'unauthorized', '請重新加入相簿')
   if (!TAGS.includes(tag)) return fail(400, 'invalid_tag', '分類不正確')
-  if (!file.type.startsWith('image/')) return fail(415, 'unsupported_format', '只能上傳照片')
+  const kind = kindOf(file)
+  if (kind === 'photo' && !file.type.startsWith('image/')) {
+    return fail(415, 'unsupported_format', '看不懂這個檔案，請上傳照片或 MP4、MOV 影片')
+  }
+  const tooLarge = sizeProblem({ kind, file }, LIMITS)
+  if (tooLarge) return fail(413, 'file_too_large', tooLarge)
 
   const url = URL.createObjectURL(file)
-  const { width, height } = await imageSize(url)
+  const media = kind === 'video' ? await videoInfo(url) : { ...(await imageSize(url)), poster: url }
+  const duration = 'duration' in media ? media.duration : null
+  if (duration !== null && duration > LIMITS.maxVideoSeconds + 1) {
+    URL.revokeObjectURL(url)
+    return fail(400, 'video_too_long', '影片太長了，請剪到 3 分鐘以內再上傳')
+  }
   const photo: DemoPhoto = {
     id: newId('p'),
-    kind: 'photo',
+    kind,
     url,
-    displayUrl: url,
-    thumbnailUrl: url,
-    width,
-    height,
-    durationSeconds: null,
+    displayUrl: media.poster,
+    thumbnailUrl: media.poster,
+    width: media.width,
+    height: media.height,
+    durationSeconds: duration === null ? null : Math.round(duration * 10) / 10,
     uploaderId: guest.id,
     uploadedAt: new Date().toISOString(),
     takenAt: null,
@@ -328,16 +348,60 @@ function imageSize(url: string): Promise<{ width: number; height: number }> {
   })
 }
 
+/** 影片的尺寸、長度與封面（第一格畫成 JPEG）。瀏覽器解不開的格式就用漸層當封面 */
+function videoInfo(url: string): Promise<{
+  width: number
+  height: number
+  duration: number | null
+  poster: string
+}> {
+  return new Promise((resolve) => {
+    const video = document.createElement('video')
+    let settled = false
+    const done = (poster?: string) => {
+      if (settled) return
+      settled = true
+      const width = video.videoWidth || 1600
+      const height = video.videoHeight || 900
+      const duration = Number.isFinite(video.duration) ? video.duration : null
+      resolve({ width, height, duration, poster: poster ?? gradientImage(width, height, nextId) })
+    }
+    video.muted = true
+    video.playsInline = true
+    video.preload = 'auto'
+    video.onloadeddata = () => (video.currentTime = Math.min(0.1, video.duration || 0))
+    video.onseeked = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+      canvas.getContext('2d')?.drawImage(video, 0, 0)
+      done(canvas.toDataURL('image/jpeg', 0.85))
+    }
+    video.onerror = () => done()
+    setTimeout(() => done(), 5000)
+    video.src = url
+  })
+}
+
 // ── 設定 ──────────────────────────────────────────────
 
+function getKahoot(guest: DemoGuest): MockResponse {
+  if (!guest.isAdmin) return fail(403, 'not_admin', '只有管理員可以修改')
+  return ok(kahoot)
+}
+
+/** 整份覆蓋；url 拿掉時開關也一起關掉，沒有連結不能打開 */
 function setKahoot(guest: DemoGuest, body: Record<string, unknown>): MockResponse {
-  if (!guest.isAdmin) return fail(403, 'not_admin', '只有管理員可以設定')
+  if (!guest.isAdmin) return fail(403, 'not_admin', '只有管理員可以修改')
   const url = typeof body.url === 'string' ? body.url.trim() : ''
+  const enabled = body.enabled ?? false
+  if (typeof enabled !== 'boolean') return fail(400, 'invalid_body', 'enabled 必須是 true 或 false')
   if (url && (!/^https?:\/\//.test(url) || url.length > 500)) {
-    return fail(400, 'invalid_url', '請輸入 http:// 或 https:// 開頭的網址')
+    return fail(400, 'invalid_url', '請貼上以 https:// 開頭的完整連結')
   }
-  kahootUrl = url || null
-  return ok({ kahootUrl })
+  if (enabled && !url) return fail(400, 'url_required', '要先貼上連結才能打開')
+  kahoot = { url: url || null, enabled }
+  return ok(kahoot)
 }
 
 // ── 祝福 ──────────────────────────────────────────────
@@ -419,6 +483,7 @@ function route(
   if (key === 'PATCH /me') return updateMe(guest, body)
   if (key === 'POST /me/transfer-codes') return createTransferCode(guest)
   if (key === 'POST /me/admin') return becomeAdmin(guest, body)
+  if (key === 'GET /settings/kahoot') return getKahoot(guest)
   if (key === 'PUT /settings/kahoot') return setKahoot(guest, body)
   if (key === 'GET /stats') return stats()
   if (key === 'GET /photos') return listPhotos(guest, query)

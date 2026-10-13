@@ -51,6 +51,7 @@ npm run dev
   正常的 `npm run build` 不會打包 `src/demo/`。
 - 資料只在記憶體，**重新整理就回到初始資料**（身分仍記在手機上）。上傳的照片只在自己的瀏覽器看得到。
 - 管理員代碼是 `admin`（`/admin?code=admin`）。
+- Kahoot! 一開始就帶範例連結 `https://kahoot.it/` 並打開開關，打開網站就看得到按鈕；用管理員身分可以關掉或換連結。
 - 網站放在 `/<repo 名稱>/` 底下，由環境變數 `BASE_PATH` 決定（`vite.config.ts`，部署時自動帶 repo 名稱）。
   在 Git Bash 裡自己設 `BASE_PATH` 時要加 `MSYS_NO_PATHCONV=1`，否則會被轉成 Windows 路徑。
 - 改了 API 行為（`docs/api.md`）時，`src/demo/mockServer.ts` 也要跟著改，展示版才不會跟實際行為不一致。
