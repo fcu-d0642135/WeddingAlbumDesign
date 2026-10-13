@@ -7,12 +7,26 @@ import { session } from '@/stores/session'
 import type { Photo, PhotoTag } from '@/types/album'
 import { ApiError, toApiError } from './client'
 
+/** 展示版：進度條假裝跑一秒左右，照片交給假後端 */
+async function demoUpload(file: File, tag: PhotoTag, onProgress: (percent: number) => void) {
+  for (let percent = 20; percent < 100; percent += 20) {
+    await new Promise((resolve) => setTimeout(resolve, 150 + Math.random() * 150))
+    onProgress(percent)
+  }
+  const { mockUpload } = await import('@/demo/mockServer')
+  const res = await mockUpload(file, tag)
+  if (res.status >= 400) throw toApiError(res.status, res.data)
+  return res.data as Photo
+}
+
 export function uploadPhoto(
   file: File,
   tag: PhotoTag,
   /** 0–100 */
   onProgress: (percent: number) => void,
 ): Promise<Photo> {
+  if (import.meta.env.MODE === 'demo') return demoUpload(file, tag, onProgress)
+
   return new Promise((resolve, reject) => {
     const form = new FormData()
     form.append('file', file)

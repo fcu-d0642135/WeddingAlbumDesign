@@ -2,6 +2,8 @@
 
 婚禮相簿專案。以 PWA 形式提供，賓客可加到手機主畫面使用。
 
+前端展示版（假資料、不接後端）：https://fcu-d0642135.github.io/WeddingAlbumDesign/ ── 見 frontend/README.md 的「展示版」
+
 前後端放在同一個 repo，但各自獨立：不共用依賴、不共用工具鏈、不共用建置。
 根目錄沒有 task runner，所有指令都要先進到子專案目錄執行。
 

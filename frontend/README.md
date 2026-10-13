@@ -16,6 +16,7 @@ npm run dev
 | --- | --- |
 | `npm run dev` | 開發伺服器（http://localhost:5173） |
 | `npm run build` | 型別檢查 + 產出 `dist/` |
+| `npm run build:demo` | 產出展示版，見下方「展示版」 |
 | `npm run preview` | 預覽 build 產物 |
 | `npm run type-check` | 只跑 `vue-tsc -b` |
 | `npm run lint` | ESLint 檢查並自動修正 |
@@ -34,6 +35,25 @@ npm run dev
   `docs/design/extracted/` 裡的 `A` 物件是設計稿的凍結快照，不是現行來源。
 - 照片列表一律透過 `src/stores/photoLists.ts` 取得：同樣的篩選條件共用同一份快取，
   照片詳情頁靠網址上的條件（例如 `?uploader=me`）找到使用者是從哪一串點進來的，左右滑只在那一串裡換。
+
+## 展示版
+
+給還沒架後端時讓別人看畫面用，網址：https://fcu-d0642135.github.io/WeddingAlbumDesign/
+
+這個 repo 沒開 GitHub Pages，展示版放在可以開 Pages 的
+[fcu-d0642135/WeddingAlbumDesign](https://github.com/fcu-d0642135/WeddingAlbumDesign) 的 `demo` 分支：
+
+- 部署用的 workflow（`.github/workflows/deploy-demo.yml`）只放在 `demo` 分支，**不要合併進 `master`**。
+- 把 `demo` 推到 WeddingAlbumDesign 的 `demo` 分支，那邊的 GitHub Actions 就會用 `npm run build:demo` 建置並部署。
+- 要更新展示網站時，把 `master` 合併進 `demo`，再推上去。
+- 不接後端。`import.meta.env.MODE === 'demo'` 時，`api/client.ts` 與 `api/upload.ts` 改呼叫
+  `src/demo/mockServer.ts` 這個假後端，行為照 `docs/api.md`；假資料照搬後端的 `flask seed`。
+  正常的 `npm run build` 不會打包 `src/demo/`。
+- 資料只在記憶體，**重新整理就回到初始資料**（身分仍記在手機上）。上傳的照片只在自己的瀏覽器看得到。
+- 管理員代碼是 `admin`（`/admin?code=admin`）。
+- 網站放在 `/<repo 名稱>/` 底下，由環境變數 `BASE_PATH` 決定（`vite.config.ts`，部署時自動帶 repo 名稱）。
+  在 Git Bash 裡自己設 `BASE_PATH` 時要加 `MSYS_NO_PATHCONV=1`，否則會被轉成 Windows 路徑。
+- 改了 API 行為（`docs/api.md`）時，`src/demo/mockServer.ts` 也要跟著改，展示版才不會跟實際行為不一致。
 
 ## PWA
 

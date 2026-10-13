@@ -1,0 +1,68 @@
+# 前端展示版：用假資料、不接後端，部署到 GitHub Pages（https://<帳號>.github.io/<repo 名稱>/）。
+#
+# wedding-album 這個 repo 沒開 Pages，展示版放在可以開 Pages 的 fcu-d0642135/WeddingAlbumDesign：
+# 把 demo 分支推到那邊的 demo 分支就會部署。只在那個 repo 執行，推到 wedding-album 不會觸發。
+# 這個檔案只放在 demo 分支，不要合併進 master。
+#
+# WeddingAlbumDesign 第一次使用前，到 Settings：
+#   1. Pages：Source 設成「GitHub Actions」
+#   2. Environments → github-pages → Deployment branches：加入 demo（預設只允許預設分支）
+name: Deploy demo to GitHub Pages
+
+on:
+  push:
+    branches: [demo]
+    paths: ['frontend/**', '.github/workflows/deploy-demo.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 連續推好幾次時只留最新的一次部署
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.repository == 'fcu-d0642135/WeddingAlbumDesign'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Build demo
+        run: npm run build:demo
+        env:
+          # 專案網站放在 /<repo 名稱>/ 底下
+          BASE_PATH: /${{ github.event.repository.name }}/
+
+      # GitHub Pages 不認得前端路由：直接打開 /wedding-album/blessings 會找不到檔案，
+      # 改送 404.html。內容跟 index.html 一樣，就會由前端路由接手
+      - run: cp dist/index.html dist/404.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

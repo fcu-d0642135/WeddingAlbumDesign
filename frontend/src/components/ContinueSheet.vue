@@ -42,7 +42,8 @@ async function generate() {
     const created = await createTransferCode()
     code.value = created.code
     // 連結由前端組：前後端可能不同網域，後端不知道前端的網址
-    link.value = `${window.location.origin}/continue?code=${created.code}`
+    // BASE_URL 是網站所在的路徑（展示版放在 GitHub Pages 的 /<repo 名稱>/ 底下），結尾帶斜線
+    link.value = `${window.location.origin}${import.meta.env.BASE_URL}continue?code=${created.code}`
     expiresAt.value = new Date(created.expiresAt)
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : '產生連結失敗，請稍後再試'

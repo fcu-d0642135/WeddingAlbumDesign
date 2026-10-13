@@ -33,7 +33,7 @@ function write(key: string, value: string) {
 
 /**
  * 活動碼來自會場 QR code 的網址（?code=...），第一次打開時記下來，之後加入相簿要用。
- * 開發時沒有 QR code，用後端開發模式的預設值 "dev"。
+ * 開發時沒有 QR code，用後端開發模式的預設值 "dev"；展示版沒有後端，隨便一個值都能加入。
  */
 function initialEventCode(): string {
   const fromUrl = new URLSearchParams(window.location.search).get('code')
@@ -41,7 +41,8 @@ function initialEventCode(): string {
     write(EVENT_CODE_KEY, fromUrl)
     return fromUrl
   }
-  return read(EVENT_CODE_KEY) || (import.meta.env.DEV ? 'dev' : '')
+  const fallback = import.meta.env.DEV || import.meta.env.MODE === 'demo' ? 'dev' : ''
+  return read(EVENT_CODE_KEY) || fallback
 }
 
 export const session = reactive({

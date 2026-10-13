@@ -4,7 +4,11 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// 網站所在的路徑，結尾要有斜線。GitHub Pages 的展示版放在 /<repo 名稱>/ 底下，由部署流程設定
+const base = process.env.BASE_PATH || '/'
+
 export default defineConfig({
+  base,
   plugins: [
     vue(),
     VitePWA({
@@ -19,8 +23,8 @@ export default defineConfig({
         lang: 'zh-Hant',
         display: 'standalone',
         orientation: 'portrait',
-        start_url: '/',
-        scope: '/',
+        start_url: base,
+        scope: base,
         theme_color: '#FAF6F0',
         background_color: '#FAF6F0',
         icons: [

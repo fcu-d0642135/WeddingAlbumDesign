@@ -52,23 +52,36 @@ export function toApiError(status: number, data: unknown): ApiError {
   )
 }
 
-function buildUrl(path: string, query?: Query) {
+function buildQuery(query?: Query) {
   const params = new URLSearchParams()
   for (const [key, value] of Object.entries(query ?? {})) {
     if (value !== undefined && value !== '') params.set(key, String(value))
   }
   const qs = params.toString()
-  return '/api' + path + (qs ? '?' + qs : '')
+  return qs ? '?' + qs : ''
 }
 
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  // 展示版（npm run build:demo）沒有後端，改由 src/demo/ 的假後端回應。
+  // 條件直接寫在這裡，正常 build 時整段連同 src/demo/ 會被拿掉
+  if (import.meta.env.MODE === 'demo') {
+    const { mockRequest } = await import('@/demo/mockServer')
+    const res = await mockRequest(
+      options.method ?? 'GET',
+      path + buildQuery(options.query),
+      options.body,
+    )
+    if (res.status >= 400) throw toApiError(res.status, res.data)
+    return res.data as T
+  }
+
   const headers: Record<string, string> = {}
   if (session.token) headers.Authorization = 'Bearer ' + session.token
   if (options.body !== undefined) headers['Content-Type'] = 'application/json'
 
   let res: Response
   try {
-    res = await fetch(buildUrl(path, options.query), {
+    res = await fetch('/api' + path + buildQuery(options.query), {
       method: options.method ?? 'GET',
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
